@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Circular Media Converter</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            --rotation: 0deg;
+        }
+
+        body {
+            background: #0f172a;
+            color: white;
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+        }
+
+        .wheel-container {
+            position: relative;
+            width: 350px;
+            height: 350px;
+            transition: transform 1s cubic-bezier(0.4, 0, 0.2, 1);
+            transform: rotate(var(--rotation));
+        }
+
+        .extension-node {
+            position: absolute;
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #1e293b;
+            border: 2px solid #3b82f6;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            transform: translate(-50%, -50%);
+            left: 50%;
+            top: 50%;
+        }
+
+        .extension-node.active {
+            background: #3b82f6;
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
+            transform: translate(-50%, -50%) scale(1.2);
+        }
+
+        /* Keep labels upright while wheel turns */
+        .node-text {
+            transform: rotate(calc(-1 * var(--rotation)));
+            font-weight: bold;
+            pointer-events: none;
+        }
+
+        .center-action {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 120px;
+            height: 120px;
+            background: white;
+            border-radius: 50%;
+            color: #0f172a;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 10;
+            text-align: center;
+            padding: 10px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+        }
+
+        .hidden-input {
+            display: none;
+        }
+
+        .status-pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.05); opacity: 0.8; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div class="text-center mb-12">
+        <h1 class="text-3xl font-bold mb-2">Smart Converter</h1>
+        <p class="text-slate-400">Select target extension to start upload</p>
+    </div>
+
+    <!-- Interface Wrapper -->
+    <div class="relative flex items-center justify-center">
+        <!-- The Rotating Wheel -->
+        <div id="wheel" class="wheel-container">
+            <!-- Nodes will be placed via JS -->
+        </div>
+
+        <!-- Central Action Button -->
+        <div id="uploadBtn" class="center-action group hover:bg-blue-50">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            <span class="text-xs font-bold uppercase tracking-wider" id="actionLabel">Select Format</span>
+        </div>
+    </div>
+
+    <input type="file" id="fileInput" class="hidden-input" accept=".png,.jpg,.jpeg,.pdf">
+
+    <!-- Progress UI -->
+    <div id="progressArea" class="mt-12 w-full max-w-md hidden">
+        <div class="bg-slate-800 rounded-xl p-6 shadow-xl border border-slate-700">
+            <div class="flex justify-between items-center mb-4">
+                <span id="fileNameDisplay" class="truncate font-medium text-blue-400">file.png</span>
+                <span id="statusBadge" class="text-xs bg-blue-500/20 text-blue-400 px-2 py-1 rounded">Processing</span>
+            </div>
+            <div class="w-full bg-slate-700 rounded-full h-2 mb-4">
+                <div id="progressBar" class="bg-blue-500 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+            </div>
+            <div id="downloadLinkContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+
+        const formats = ['JPG', 'PNG', 'PDF'];
+        const wheel = document.getElementById('wheel');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const fileInput = document.getElementById('fileInput');
+        const actionLabel = document.getElementById('actionLabel');
+        const progressArea = document.getElementById('progressArea');
+        const progressBar = document.getElementById('progressBar');
+        const fileNameDisplay = document.getElementById('fileNameDisplay');
+        const downloadContainer = document.getElementById('downloadLinkContainer');
+
+        let selectedFormat = null;
+        let currentRotation = 0;
+
+        // Initialize Wheel Nodes
+        function initWheel() {
+            const radius = 140;
+            formats.forEach((fmt, i) => {
+                const node = document.createElement('div');
+                node.className = 'extension-node';
+                node.dataset.format = fmt;
+                
+                const angle = (i * (360 / formats.length)) * (Math.PI / 180);
+                const x = 175 + radius * Math.cos(angle);
+                const y = 175 + radius * Math.sin(angle);
+                
+                node.style.left = `${x}px`;
+                node.style.top = `${y}px`;
+                node.innerHTML = `<span class="node-text">${fmt}</span>`;
+                
+                node.onclick = () => selectFormat(fmt, i);
+                wheel.appendChild(node);
+            });
+        }
+
+        function selectFormat(fmt, index) {
+            selectedFormat = fmt;
+            
+            // Calculate rotation to bring selected to the "top" (270 degrees)
+            const targetAngle = (index * (360 / formats.length));
+            currentRotation = -targetAngle - 90; 
+            document.documentElement.style.setProperty('--rotation', `${currentRotation}deg`);
+
+            // Update UI
+            document.querySelectorAll('.extension-node').forEach(n => n.classList.remove('active'));
+            document.querySelectorAll('.extension-node')[index].classList.add('active');
+            
+            actionLabel.innerText = `Upload for ${fmt}`;
+            uploadBtn.classList.add('status-pulse');
+        }
+
+        uploadBtn.onclick = () => {
+            if (!selectedFormat) {
+                // Shake effect if no format selected
+                wheel.style.animation = 'shake 0.5s';
+                setTimeout(() => wheel.style.animation = '', 500);
+                return;
+            }
+            fileInput.click();
+        };
+
+        fileInput.onchange = async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            // Start Processing UI
+            progressArea.classList.remove('hidden');
+            fileNameDisplay.innerText = file.name;
+            progressBar.style.width = '20%';
+            downloadContainer.innerHTML = '';
+
+            try {
+                let blob;
+                if (file.type === 'application/pdf') {
+                    blob = await processPDF(file);
+                } else {
+                    blob = await processImage(file);
+                }
+
+                progressBar.style.width = '100%';
+                const url = URL.createObjectURL(blob);
+                const name = `converted_${Date.now()}.${selectedFormat.toLowerCase()}`;
+                
+                downloadContainer.innerHTML = `
+                    <a href="${url}" download="${name}" class="block w-full text-center bg-green-500 hover:bg-green-600 text-white font-bold py-2 rounded-lg transition-colors">
+                        Download Result
+                    </a>
+                `;
+                document.getElementById('statusBadge').innerText = 'Completed';
+                document.getElementById('statusBadge').className = 'text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded';
+            } catch (err) {
+                console.error(err);
+                document.getElementById('statusBadge').innerText = 'Error';
+                document.getElementById('statusBadge').className = 'text-xs bg-red-500/20 text-red-400 px-2 py-1 rounded';
+            }
+        };
+
+        async function processImage(file) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        const ctx = canvas.getContext('2d');
+                        
+                        // Handle background for JPG if PNG has transparency
+                        if (selectedFormat === 'JPG') {
+                            ctx.fillStyle = '#FFFFFF';
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        }
+                        
+                        ctx.drawImage(img, 0, 0);
+                        
+                        const mime = `image/${selectedFormat === 'JPG' ? 'jpeg' : selectedFormat.toLowerCase()}`;
+                        const quality = selectedFormat === 'JPG' ? 0.8 : 1.0;
+                        
+                        canvas.toBlob((blob) => resolve(blob), mime, quality);
+                    };
+                    img.src = event.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function processPDF(file) {
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+            const page = await pdf.getPage(1); // Get first page
+            
+            const viewport = page.getViewport({ scale: 2.0 });
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            await page.render({ canvasContext: context, viewport: viewport }).promise;
+
+            const mime = `image/${selectedFormat === 'JPG' ? 'jpeg' : selectedFormat.toLowerCase()}`;
+            return new Promise(resolve => canvas.toBlob(resolve, mime, 0.85));
+        }
+
+        initWheel();
+    </script>
+</body>
+</html>
