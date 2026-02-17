@@ -49,7 +49,6 @@
             transform: translate(-50%, -50%) scale(1.2);
         }
 
-        /* Keep labels upright while wheel turns */
         .node-text {
             transform: rotate(calc(-1 * var(--rotation)));
             font-weight: bold;
@@ -90,23 +89,36 @@
             50% { transform: scale(1.05); opacity: 0.8; }
             100% { transform: scale(1); opacity: 1; }
         }
+
+        input[type=range] {
+            accent-color: #3b82f6;
+        }
     </style>
 </head>
 <body class="flex flex-col items-center justify-center min-h-screen p-4">
 
-    <div class="text-center mb-12">
-        <h1 class="text-3xl font-bold mb-2">Smart Converter</h1>
-        <p class="text-slate-400">Select target extension to start upload</p>
+    <div class="text-center mb-8">
+        <h1 class="text-3xl font-bold mb-2 uppercase tracking-widest">Hard Compressor</h1>
+        <p class="text-slate-400">Strict Limit: 200kb - 900kb</p>
+    </div>
+
+    <!-- Compression Slider -->
+    <div class="mb-10 w-full max-w-xs bg-slate-800/50 p-4 rounded-2xl border border-slate-700">
+        <div class="flex justify-between text-xs mb-2 text-slate-400 font-bold uppercase tracking-tighter">
+            <span>Tight (200kb)</span>
+            <span id="targetLabel" class="text-blue-400">Limit: 500kb</span>
+            <span>Max (900kb)</span>
+        </div>
+        <input type="range" id="sizeSlider" min="200" max="900" value="500" class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer">
+        <p class="text-[9px] text-center mt-2 text-slate-500 italic">Large files (3MB+) will be auto-downscaled to fit.</p>
     </div>
 
     <!-- Interface Wrapper -->
     <div class="relative flex items-center justify-center">
-        <!-- The Rotating Wheel -->
         <div id="wheel" class="wheel-container">
-            <!-- Nodes will be placed via JS -->
+            <!-- Nodes placed via JS -->
         </div>
 
-        <!-- Central Action Button -->
         <div id="uploadBtn" class="center-action group hover:bg-blue-50">
             <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
@@ -124,9 +136,10 @@
                 <span id="fileNameDisplay" class="truncate font-medium text-blue-400">file.png</span>
                 <span id="statusBadge" class="text-xs bg-blue-500/20 text-blue-400 px-2 py-1 rounded">Processing</span>
             </div>
-            <div class="w-full bg-slate-700 rounded-full h-2 mb-4">
-                <div id="progressBar" class="bg-blue-500 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+            <div class="w-full bg-slate-700 rounded-full h-2 mb-2">
+                <div id="progressBar" class="bg-blue-500 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
             </div>
+            <p id="sizeReductionInfo" class="text-[10px] text-slate-400 mb-4 text-center"></p>
             <div id="downloadLinkContainer"></div>
         </div>
     </div>
@@ -143,26 +156,29 @@
         const progressBar = document.getElementById('progressBar');
         const fileNameDisplay = document.getElementById('fileNameDisplay');
         const downloadContainer = document.getElementById('downloadLinkContainer');
+        const sizeSlider = document.getElementById('sizeSlider');
+        const targetLabel = document.getElementById('targetLabel');
+        const sizeInfo = document.getElementById('sizeReductionInfo');
 
         let selectedFormat = null;
         let currentRotation = 0;
 
-        // Initialize Wheel Nodes
+        sizeSlider.oninput = (e) => {
+            targetLabel.innerText = `Limit: ${e.target.value}kb`;
+        };
+
         function initWheel() {
             const radius = 140;
             formats.forEach((fmt, i) => {
                 const node = document.createElement('div');
                 node.className = 'extension-node';
                 node.dataset.format = fmt;
-                
                 const angle = (i * (360 / formats.length)) * (Math.PI / 180);
                 const x = 175 + radius * Math.cos(angle);
                 const y = 175 + radius * Math.sin(angle);
-                
                 node.style.left = `${x}px`;
                 node.style.top = `${y}px`;
                 node.innerHTML = `<span class="node-text">${fmt}</span>`;
-                
                 node.onclick = () => selectFormat(fmt, i);
                 wheel.appendChild(node);
             });
@@ -170,27 +186,17 @@
 
         function selectFormat(fmt, index) {
             selectedFormat = fmt;
-            
-            // Calculate rotation to bring selected to the "top" (270 degrees)
             const targetAngle = (index * (360 / formats.length));
             currentRotation = -targetAngle - 90; 
             document.documentElement.style.setProperty('--rotation', `${currentRotation}deg`);
-
-            // Update UI
             document.querySelectorAll('.extension-node').forEach(n => n.classList.remove('active'));
             document.querySelectorAll('.extension-node')[index].classList.add('active');
-            
             actionLabel.innerText = `Upload for ${fmt}`;
             uploadBtn.classList.add('status-pulse');
         }
 
         uploadBtn.onclick = () => {
-            if (!selectedFormat) {
-                // Shake effect if no format selected
-                wheel.style.animation = 'shake 0.5s';
-                setTimeout(() => wheel.style.animation = '', 500);
-                return;
-            }
+            if (!selectedFormat) return;
             fileInput.click();
         };
 
@@ -198,83 +204,120 @@
             const file = e.target.files[0];
             if (!file) return;
 
-            // Start Processing UI
             progressArea.classList.remove('hidden');
             fileNameDisplay.innerText = file.name;
-            progressBar.style.width = '20%';
+            progressBar.style.width = '10%';
             downloadContainer.innerHTML = '';
+            sizeInfo.innerText = "Applying hard compression limits...";
+            document.getElementById('statusBadge').innerText = 'Processing';
 
             try {
-                let blob;
+                let sourceData;
                 if (file.type === 'application/pdf') {
-                    blob = await processPDF(file);
+                    sourceData = await pdfToImageData(file);
                 } else {
-                    blob = await processImage(file);
+                    sourceData = await fileToImageData(file);
                 }
+                
+                progressBar.style.width = '40%';
+                const targetSizeKB = parseInt(sizeSlider.value);
+                
+                // Hard Compression Logic: Quality + Scaling
+                const resultBlob = await hardCompress(sourceData, targetSizeKB, selectedFormat);
 
                 progressBar.style.width = '100%';
-                const url = URL.createObjectURL(blob);
-                const name = `converted_${Date.now()}.${selectedFormat.toLowerCase()}`;
+                const finalSizeKB = (resultBlob.size / 1024).toFixed(1);
+                sizeInfo.innerText = `Original: ${(file.size/1024/1024).toFixed(1)}MB -> Final: ${finalSizeKB}KB`;
+                
+                const url = URL.createObjectURL(resultBlob);
+                const name = `compressed_${Date.now()}.${selectedFormat.toLowerCase()}`;
                 
                 downloadContainer.innerHTML = `
-                    <a href="${url}" download="${name}" class="block w-full text-center bg-green-500 hover:bg-green-600 text-white font-bold py-2 rounded-lg transition-colors">
+                    <a href="${url}" download="${name}" class="block w-full text-center bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg shadow-xl uppercase tracking-widest text-sm">
                         Download Result
                     </a>
                 `;
-                document.getElementById('statusBadge').innerText = 'Completed';
+                document.getElementById('statusBadge').innerText = 'Ready';
                 document.getElementById('statusBadge').className = 'text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded';
             } catch (err) {
                 console.error(err);
-                document.getElementById('statusBadge').innerText = 'Error';
-                document.getElementById('statusBadge').className = 'text-xs bg-red-500/20 text-red-400 px-2 py-1 rounded';
+                document.getElementById('statusBadge').innerText = 'Failed';
+                sizeInfo.innerText = "Error: File too complex or invalid.";
             }
         };
 
-        async function processImage(file) {
+        async function fileToImageData(file) {
             return new Promise((resolve) => {
                 const reader = new FileReader();
-                reader.onload = (event) => {
+                reader.onload = (e) => {
                     const img = new Image();
-                    img.onload = () => {
-                        const canvas = document.createElement('canvas');
-                        canvas.width = img.width;
-                        canvas.height = img.height;
-                        const ctx = canvas.getContext('2d');
-                        
-                        // Handle background for JPG if PNG has transparency
-                        if (selectedFormat === 'JPG') {
-                            ctx.fillStyle = '#FFFFFF';
-                            ctx.fillRect(0, 0, canvas.width, canvas.height);
-                        }
-                        
-                        ctx.drawImage(img, 0, 0);
-                        
-                        const mime = `image/${selectedFormat === 'JPG' ? 'jpeg' : selectedFormat.toLowerCase()}`;
-                        const quality = selectedFormat === 'JPG' ? 0.8 : 1.0;
-                        
-                        canvas.toBlob((blob) => resolve(blob), mime, quality);
-                    };
-                    img.src = event.target.result;
+                    img.onload = () => resolve(img);
+                    img.src = e.target.result;
                 };
                 reader.readAsDataURL(file);
             });
         }
 
-        async function processPDF(file) {
+        async function pdfToImageData(file) {
             const arrayBuffer = await file.arrayBuffer();
             const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
-            const page = await pdf.getPage(1); // Get first page
-            
+            const page = await pdf.getPage(1);
             const viewport = page.getViewport({ scale: 2.0 });
             const canvas = document.createElement('canvas');
-            const context = canvas.getContext('2d');
             canvas.height = viewport.height;
             canvas.width = viewport.width;
+            await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+            const img = new Image();
+            img.src = canvas.toDataURL();
+            return new Promise(resolve => img.onload = () => resolve(img));
+        }
 
-            await page.render({ canvasContext: context, viewport: viewport }).promise;
+        async function hardCompress(img, targetKB, format) {
+            const mime = `image/${format === 'JPG' ? 'jpeg' : format.toLowerCase()}`;
+            let scale = 1.0;
+            let quality = 0.85;
+            let blob = null;
+            let attempts = 0;
 
-            const mime = `image/${selectedFormat === 'JPG' ? 'jpeg' : selectedFormat.toLowerCase()}`;
-            return new Promise(resolve => canvas.toBlob(resolve, mime, 0.85));
+            // Step 1: Quality Binary Search (Up to 5 iterations)
+            while (attempts < 5) {
+                blob = await getBlob(img, scale, quality, mime, format);
+                if (blob.size / 1024 <= targetKB) break;
+                quality -= 0.15;
+                if (quality < 0.2) break;
+                attempts++;
+            }
+
+            // Step 2: Hard Scaling (If quality reduction wasn't enough)
+            // This is how we get a 3MB file under 500KB reliably
+            while (blob.size / 1024 > targetKB && scale > 0.1) {
+                scale -= 0.15;
+                blob = await getBlob(img, scale, quality, mime, format);
+            }
+
+            return blob;
+        }
+
+        function getBlob(img, scale, quality, mime, format) {
+            return new Promise(resolve => {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width * scale;
+                canvas.height = img.height * scale;
+                const ctx = canvas.getContext('2d');
+                
+                if (format === 'JPG') {
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                }
+                
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                
+                if (format === 'PNG') {
+                    canvas.toBlob(resolve, mime);
+                } else {
+                    canvas.toBlob(resolve, mime, quality);
+                }
+            });
         }
 
         initWheel();
