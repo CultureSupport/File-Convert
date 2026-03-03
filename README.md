@@ -1,2 +1,3 @@
-# File-Convert
-Converting Files For  Security Without Ads or Disturbed App Cookies
+# File.Compressor
+
+File Compressor and circle controll select jpg,png,pdf and compress under 1mb
